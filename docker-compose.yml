@@ -1,0 +1,146 @@
+version: '3.7'
+
+#            10.0.0.0/24                10.0.1.0/24             10.0.2.0/24               10.0.3.0/24
+# llr-client <.3-----.2> llr-netem-wlan <.2-----.3> llr-gateway <.3-----.2> llr-netem-sat <.2-----.3> llr-server
+#
+#     vpn 10.8.0.2-----------------------------10.8.0.1
+services:
+  llr-client:
+    image: llr
+    container_name: llr-client
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    volumes:
+      - ./config:/config:ro
+      - ./output:/output:rw
+    command: >
+      sh -c "ifconfig &&
+             ip route change default via 10.0.0.2 &&
+             ip route &&
+             touch output/client_ready &&
+             sleep infinity"
+    depends_on:
+      - llr-netem-wlan
+      - llr-gateway
+      - llr-netem-sat
+      - llr-server
+    networks:
+      llr-net-wlan-left:
+        ipv4_address: 10.0.0.3
+
+  llr-netem-wlan:
+    image: llr
+    container_name: llr-netem-wlan
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    command: >
+      sh -c "ifconfig &&
+             ip route change default via 10.0.1.3 &&
+             ip route &&
+             sysctl -w net.ipv4.ip_forward=1 &&
+             tc qdisc add dev wlanleft0 root handle 1:0 netem loss 1% &&
+             tc qdisc add dev wlanright0 root handle 1:0 netem loss 1% &&
+             sleep infinity"
+    networks:
+      llr-net-wlan-left:
+        ipv4_address: 10.0.0.2
+      llr-net-wlan-right:
+        ipv4_address: 10.0.1.2
+
+  llr-gateway:
+    image: llr
+    container_name: llr-gateway
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./config:/config:ro
+    command: >
+      sh -c "ifconfig &&
+             ifconfig &&
+             ip route del default &&
+             ip route add 10.0.0.0/24 via 10.0.1.2 &&
+             ip route add 10.0.3.0/24 via 10.0.2.2 &&
+             ip route &&
+             sysctl -w net.ipv4.ip_forward=1 &&
+             sleep infinity"
+    networks:
+      llr-net-wlan-right:
+        ipv4_address: 10.0.1.3
+      llr-net-sat-left:
+        ipv4_address: 10.0.2.3
+
+        
+  llr-netem-sat:
+    image: llr
+    container_name: llr-netem-sat
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    command: >
+      sh -c "ifconfig &&
+             ifconfig &&
+             ip route change default via 10.0.2.3 &&
+             ip route &&
+             sysctl -w net.ipv4.ip_forward=1 &&
+             tc qdisc add dev satleft0 root handle 1:0 netem delay 100ms &&
+             tc qdisc add dev satright0 root handle 1:0 netem delay 100ms &&
+             sleep infinity"
+    networks:
+      llr-net-sat-left:
+        ipv4_address: 10.0.2.2
+      llr-net-sat-right:
+        ipv4_address: 10.0.3.2
+        
+  llr-server:
+    image: llr
+    container_name: llr-server
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./config:/config:ro
+      - ./output:/output:rw
+    command: >
+      sh -c "ifconfig &&
+             ip route change default via 10.0.3.2 &&
+             ip route &&
+             sleep infinity"
+    networks:
+      llr-net-sat-right:
+        ipv4_address: 10.0.3.3
+
+networks:
+  llr-net-wlan-left:
+    driver_opts:
+      com.docker.network.bridge.name: llr-wlan-left
+      com.docker.network.container_iface_prefix: wlanleft
+    ipam:
+      config:
+        - subnet: "10.0.0.0/24"
+        
+  llr-net-wlan-right:
+    driver_opts:
+      com.docker.network.bridge.name: llr-wlan-right
+      com.docker.network.container_iface_prefix: wlanright
+    ipam:
+      config:
+        - subnet: "10.0.1.0/24"
+        
+  llr-net-sat-left:
+    driver_opts:
+      com.docker.network.bridge.name: llr-sat-left
+      com.docker.network.container_iface_prefix: satleft
+    ipam:
+      config:
+        - subnet: "10.0.2.0/24"
+        
+  llr-net-sat-right:
+    driver_opts:
+      com.docker.network.bridge.name: llr-sat-right
+      com.docker.network.container_iface_prefix: satright
+    ipam:
+      config:
+        - subnet: "10.0.3.0/24"
